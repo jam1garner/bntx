@@ -2,6 +2,8 @@ use std::fmt;
 use binread::prelude::*;
 use binread::{FilePtr16, FilePtr32, FilePtr64, NullString};
 
+pub mod tegra_swizzle;
+
 #[derive(BinRead, PartialEq, Debug, Clone, Copy)]
 enum ByteOrder {
     #[br(magic = 0xFFFEu16)]
@@ -26,10 +28,12 @@ struct BntxHeader {
 #[derive(BinRead, Debug)]
 struct HeaderInner {
     revision: u16,
-    file_name: FilePtr32<NullString>,
 
-    #[br(pad_before = 2)]
-    str_addr: FilePtr16<StrSection>,
+    #[br(parse_with = FilePtr32::parse, map = NullString::into_string)]
+    file_name: String,
+
+    #[br(pad_before = 2, parse_with = FilePtr16::parse)]
+    str_addr: StrSection,
     reloc_addr: u32,
     file_size: u32,
 }
@@ -54,14 +58,22 @@ struct BntxStr {
     chars: String,
 }
 
+impl Into<String> for BntxStr {
+    fn into(self) -> String {
+        self.chars
+    }
+}
+
 #[derive(BinRead, Debug)]
 #[br(magic = b"NX  ")]
 struct NxHeader {
     count: u32,
-    #[br(count = count)]
-    info_ptr: FilePtr64<Vec<FilePtr64<BrtiSection>>>,
+    #[br(count = count, parse_with = FilePtr64::parse)]
+    info_ptr: Vec<FilePtr64<BrtiSection>>,
     data_blk_ptr: u64,
-    dict_ptr: FilePtr64<DictSection>,
+
+    #[br(parse_with = FilePtr64::parse)]
+    dict_ptr: DictSection,
     dict_size: u64,
 }
 
@@ -69,6 +81,15 @@ struct NxHeader {
 #[br(magic = b"_DIC")]
 struct DictSection {
 
+}
+
+
+#[derive(BinRead, Debug)]
+enum SurfaceFormat {
+    #[br(magic = 0x0b06u32)]
+    R8G8B8A8_SRGB ,
+
+    Unknown(u32),
 }
 
 #[derive(BinRead, Debug)]
@@ -82,23 +103,25 @@ struct BrtiSection {
     siwzzle: u16,
     mips_count: u16,
     num_multi_sample: u32,
-    format: u32,
+    format: SurfaceFormat,
     unk2: u32,
     width: u32,
     height: u32,
     depth: u32,
     array_len: u32,
-    size_range: u32,
+    size_range: i32,
     unk4: [u32; 6],
     image_size: u32,
     align: u32,
     comp_sel: u32,
     ty: u32,
-    name_addr: FilePtr64<BntxStr>,
+
+    #[br(parse_with = FilePtr64::parse)]
+    name_addr: BntxStr,
     parent_addr: u64,
 
     #[br(args(image_size), parse_with = read_double_indirect)]
-    textures: ImageData,
+    texture: ImageData,
 }
 
 use binread::{io::{Read, Seek}, ReadOptions};
@@ -135,6 +158,31 @@ struct BntxFile {
     nx_header: NxHeader,
 }
 
+impl BntxFile {
+    fn to_image(&self) -> image::DynamicImage {
+        let info: &BrtiSection = &*self.nx_header.info_ptr[0];
+        let data = &self.nx_header.info_ptr[0].texture.0[..];
+
+        let data = tegra_swizzle::deswizzle(
+            info.width, info.height, info.depth,
+            1,
+            1,
+            1,
+            false,
+            4,
+            info.tile_mode as _,
+            info.size_range,
+            &info.texture.0
+        );
+
+        let base_size = info.width as usize * info.height as usize * 4;
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(info.width, info.height, data[..base_size].to_owned())
+                .unwrap()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use binread::prelude::*;
@@ -147,6 +195,9 @@ mod tests {
 
         let test: BntxFile = data.read_le().unwrap();
 
-        dbg!(test);
+        dbg!(&test);
+
+        test.to_image()
+            .save("test.png");
     }
 }
