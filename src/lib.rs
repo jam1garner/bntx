@@ -34,8 +34,41 @@ struct HeaderInner {
 
     #[br(pad_before = 2, parse_with = FilePtr16::parse)]
     str_addr: StrSection,
-    reloc_addr: u32,
+
+    #[br(parse_with = FilePtr32::parse)]
+    reloc_addr: RelocationTable,
+
     file_size: u32,
+}
+
+#[derive(BinRead, Debug)]
+struct RelocationSection {
+    pointer: u64,
+    position: u32,
+    size: u32,
+    index: u32,
+    count: u32,
+}
+
+#[derive(BinRead, Debug)]
+struct RelocationEntry {
+    position: u32,
+    struct_count: u16,
+    offset_count: u8,
+    padding_count: u8,
+}
+
+#[derive(BinRead, Debug)]
+#[br(magic = b"_RLT")]
+struct RelocationTable {
+    rlt_section_pos: u32,
+    count: u32,
+
+    #[br(pad_before = 4, count = count)]
+    sections: Vec<RelocationSection>,
+    
+    #[br(count = sections.iter().map(|x| x.count).sum::<u32>())]
+    entries: Vec<RelocationEntry>,
 }
 
 #[derive(BinRead, Debug)]
