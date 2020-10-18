@@ -1,6 +1,7 @@
 use std::{fmt, io};
 use std::path::Path;
 use binread::prelude::*;
+use binread::derive_binread;
 use binread::{FilePtr16, FilePtr32, FilePtr64, NullString};
 
 use binwrite::{BinWrite, WriterOption};
@@ -52,7 +53,7 @@ impl BntxHeader {
         parent: &BntxFile
     ) -> io::Result<()> {
         let start_of_reloc_section = (
-            START_OF_TEXTURE_DATA + parent.nx_header.info_ptr[0].texture.0.len()
+            START_OF_TEXTURE_DATA + parent.nx_header.info_ptr.texture.0.len()
         ) as u32;
         (
             b"BNTX",
@@ -72,7 +73,8 @@ impl BntxHeader {
     }
 }
 
-#[derive(BinRead, Debug)]
+#[derive_binread]
+#[derive(Debug)]
 struct HeaderInner {
     revision: u16,
 
@@ -85,6 +87,7 @@ struct HeaderInner {
     #[br(parse_with = FilePtr32::parse)]
     reloc_table: RelocationTable,
 
+    #[br(temp)]
     file_size: u32,
 }
 
@@ -109,10 +112,14 @@ struct RelocationEntry {
 
 const SIZE_OF_RELOC_ENTRY: usize = size_of::<u32>() + size_of::<u16>() + (size_of::<u8>() * 2);
 
-#[derive(BinRead, Debug)]
+#[derive_binread]
+#[derive(Debug)]
 #[br(magic = b"_RLT")]
 struct RelocationTable {
+    #[br(temp)]
     rlt_section_pos: u32,
+    
+    #[br(temp)]
     count: u32,
 
     #[br(pad_before = 4, count = count)]
@@ -137,7 +144,7 @@ impl RelocationTable {
     fn write_options<W: io::Write>(&self, writer: &mut W, options: &WriterOption, parent: &BntxFile) -> io::Result<()> {
         (
             b"_RLT",
-            (START_OF_TEXTURE_DATA + parent.nx_header.info_ptr[0].texture.0.len()) as u32,
+            (START_OF_TEXTURE_DATA + parent.nx_header.info_ptr.texture.0.len()) as u32,
             self.sections.len() as u32,
             0u32,
             &self.sections,
@@ -146,14 +153,18 @@ impl RelocationTable {
     }
 }
 
-#[derive(BinRead, Debug)]
+#[derive_binread]
+#[derive(Debug)]
 #[br(magic = b"_STR")]
 struct StrSection {
     unk: u32,
     unk2: u32,
     unk3: u32,
+
+    #[br(temp)]
     str_count: u32,
 
+    #[br(temp)]
     empty: BntxStr,
 
     #[br(count = str_count)]
@@ -168,7 +179,7 @@ impl BinWrite for StrSection {
             self.unk2,
             self.unk3,
             self.strings.len() as u32,
-            &self.empty,
+            BntxStr::from(String::new()),
             &self.strings,
         ).write_options(writer, options)
     }
@@ -177,16 +188,18 @@ impl BinWrite for StrSection {
 impl StrSection {
     fn get_size(&self) -> usize {
         (5 * size_of::<u32>())
-            + self.empty.get_size()
+            + EMPTY_STR_SIZE
             + self.strings.iter()
                 .map(|x| x.get_size())
                 .sum::<usize>()
     }
 }
 
-#[derive(BinRead, BinWrite, Debug)]
+#[derive_binread]
+#[derive(BinWrite, Debug)]
 struct BntxStr {
     len: u16,
+
     #[br(align_after = 4, count = len, map = |x: Vec<u8>| String::from_utf8_lossy(&x).into_owned())]
     #[binwrite(cstr, align_after(4))]
     chars: String,
@@ -207,27 +220,32 @@ impl BntxStr {
     }
 }
 
-impl Into<BntxStr> for String {
-    fn into(self) -> BntxStr {
+impl From<String> for BntxStr {
+    fn from(chars: String) -> Self {
         BntxStr {
-            len: self.len() as u16,
-            chars: self
+            len: chars.len() as u16,
+            chars
         }
     }
 }
 
-impl Into<String> for BntxStr {
-    fn into(self) -> String {
-        self.chars
+impl From<BntxStr> for String {
+    fn from(bntx_str: BntxStr) -> String {
+        bntx_str.chars
     }
 }
 
-#[derive(BinRead, Debug)]
+#[derive_binread]
+#[derive(Debug)]
 #[br(magic = b"NX  ")]
 struct NxHeader {
+    #[br(temp)]
     count: u32,
-    #[br(count = count, parse_with = FilePtr64::parse)]
-    info_ptr: Vec<FilePtr64<BrtiSection>>,
+
+    #[br(parse_with = read_double_indirect)]
+    info_ptr: BrtiSection,
+
+    #[br(temp)]
     data_blk_ptr: u64,
 
     #[br(parse_with = FilePtr64::parse)]
@@ -298,7 +316,7 @@ struct BrtiSection {
     flags: u8,
     dim: u8,
     tile_mode: u16,
-    siwzzle: u16,
+    swizzle: u16,
     mips_count: u16,
     num_multi_sample: u32,
     format: SurfaceFormat,
@@ -334,7 +352,7 @@ impl BrtiSection {
                 self.flags,
                 self.dim,
                 self.tile_mode,
-                self.siwzzle,
+                self.swizzle,
                 self.mips_count,
                 self.num_multi_sample,
                 &self.format,
@@ -381,9 +399,13 @@ impl BrtiSection {
 
 use binread::{io::{Read, Seek}, ReadOptions};
 
-fn read_double_indirect<R: Read + Seek>(reader: &mut R, options: &ReadOptions, args: (u32,)) -> BinResult<ImageData> {
+fn read_double_indirect<T: BinRead, R: Read + Seek>(
+    reader: &mut R,
+    options: &ReadOptions,
+    args: T::Args
+) -> BinResult<T> {
 
-    let mut data = <FilePtr64<FilePtr64<ImageData>> as BinRead>::read_options(
+    let mut data = <FilePtr64<FilePtr64<T>> as BinRead>::read_options(
         reader,
         options,
         args
@@ -414,8 +436,8 @@ struct BntxFile {
 
 impl BntxFile {
     fn to_image(&self) -> image::DynamicImage {
-        let info: &BrtiSection = &*self.nx_header.info_ptr[0];
-        let data = &self.nx_header.info_ptr[0].texture.0[..];
+        let info: &BrtiSection = &self.nx_header.info_ptr;
+        let data = &self.nx_header.info_ptr.texture.0[..];
 
         let data = tegra_swizzle::deswizzle(
             info.width, info.height, info.depth,
@@ -454,7 +476,7 @@ impl BntxFile {
         ).write_options(writer, &options)?;
 
 
-        self.nx_header.info_ptr[0].write_options(writer, &options, self)?;
+        self.nx_header.info_ptr.write_options(writer, &options, self)?;
 
         (
             &[0; 0x100][..],
@@ -478,15 +500,90 @@ impl BntxFile {
         (
             b"BRTD",
             0,
-            self.nx_header.info_ptr[0].texture.0.len() as u64 + 0x10
+            self.nx_header.info_ptr.texture.0.len() as u64 + 0x10
         ).write_options(writer, &options)?;
         
 
-        writer.write_all(&self.nx_header.info_ptr[0].texture.0)?;
+        writer.write_all(&self.nx_header.info_ptr.texture.0)?;
 
         self.header.inner.reloc_table.write_options(writer, &options, self)?;
 
         Ok(())
+    }
+
+    fn from_image(img: image::DynamicImage, name: &str) -> Self {
+        let img = img.to_rgba();
+
+        let (height, width) = img.dimensions();
+        
+        let data = tegra_swizzle::swizzle(
+            width, height, 1,
+            1,
+            1,
+            1,
+            false,
+            4,
+            0,
+            4,
+            &img.into_raw()
+        );
+
+        BntxFile {
+            header: BntxHeader {
+                version: (0, 4),
+                bom: ByteOrder::LittleEndian,
+                inner: HeaderInner {
+                    revision: 0x400c,
+                    file_name: name.into(),
+                    str_section: StrSection {
+                        unk: 0x48,
+                        unk2: 0x48,
+                        unk3: 0,
+                        strings: vec![BntxStr::from(name.to_owned())],
+                    },
+                    reloc_table: RelocationTable {
+                        sections: vec![],
+                        entries: vec![]
+                    }
+                }
+            },
+            nx_header: NxHeader {
+                dict: DictSection {},
+                dict_size: 0x58,
+                info_ptr: BrtiSection {
+                    size: 3592,
+                    size2: 3592,
+                    flags: 1,
+                    dim: 2,
+                    tile_mode: 0,
+                    swizzle: 0,
+                    mips_count: 0,
+                    num_multi_sample: 1,
+                    format: SurfaceFormat::R8G8B8A8_SRGB,
+                    unk2: 32,
+                    width,
+                    height,
+                    depth: 1,
+                    array_len: 1,
+                    size_range: 4,
+                    unk4: [
+                        65543,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    image_size: 4 * height * width,
+                    align: 512,
+                    comp_sel: 84148994,
+                    ty: 1,
+                    name_addr: name.to_owned().into(),
+                    parent_addr: 32,
+                    texture: ImageData(data)
+                }
+            }
+        }
     }
 
     fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
@@ -504,15 +601,23 @@ mod tests {
 
     #[test]
     fn try_parse() {
-        let mut data = Cursor::new(&include_bytes!("/home/jam/Downloads/ester.bntx")[..]);
+        //let mut data = Cursor::new(&include_bytes!("/home/jam/Downloads/ester.bntx")[..]);
+        let mut data = Cursor::new(&include_bytes!("/home/jam/dev/ult/bntx/test.bntx")[..]);
 
         let test: BntxFile = data.read_le().unwrap();
 
         dbg!(&test);
 
-        test.save("test.bntx").unwrap();
-
         test.to_image()
             .save("test.png");
+    }
+
+    #[test]
+    fn try_from_png() {
+        let image = image::open("/home/jam/Pictures/smash_custom_skins.png").unwrap();
+
+        let tex = BntxFile::from_image(image, "test");
+
+        tex.save("test.bntx").unwrap();
     }
 }
