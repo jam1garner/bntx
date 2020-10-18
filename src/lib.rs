@@ -428,7 +428,7 @@ impl fmt::Debug for ImageData {
 }
 
 #[derive(BinRead, Debug)]
-struct BntxFile {
+pub struct BntxFile {
     header: BntxHeader,
 
     #[br(is_little = header.bom == ByteOrder::LittleEndian)]
@@ -436,9 +436,8 @@ struct BntxFile {
 }
 
 impl BntxFile {
-    fn to_image(&self) -> image::DynamicImage {
+    pub fn to_image(&self) -> image::DynamicImage {
         let info: &BrtiSection = &self.nx_header.info_ptr;
-        let data = &self.nx_header.info_ptr.texture.0[..];
 
         let data = tegra_swizzle::deswizzle(
             info.width, info.height, info.depth,
@@ -459,7 +458,7 @@ impl BntxFile {
         )
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+    pub fn write<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
         let options = binwrite::writer_option_new!(endian: binwrite::Endian::Little);
         self.header.write_options(writer, &options, self)?;
         self.nx_header.write_options(writer, &options, self)?;
@@ -512,7 +511,7 @@ impl BntxFile {
         Ok(())
     }
 
-    fn from_image(img: image::DynamicImage, name: &str) -> Self {
+    pub fn from_image(img: image::DynamicImage, name: &str) -> Self {
         let img = img.to_rgba();
 
         let (width, height) = img.dimensions();
@@ -679,7 +678,7 @@ impl BntxFile {
         }
     }
 
-    fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let mut file = std::fs::File::create(path.as_ref())?;
 
         self.write(&mut file)
@@ -692,7 +691,7 @@ mod tests {
     use binread::io::*;
     use super::BntxFile;
 
-    #[test]
+    /*#[test]
     fn try_parse() {
         //let mut data = Cursor::new(&include_bytes!("/home/jam/Downloads/ester.bntx")[..]);
         let mut data = Cursor::new(&include_bytes!("/home/jam/dev/ult/bntx/test.bntx")[..]);
@@ -703,11 +702,11 @@ mod tests {
 
         test.to_image()
             .save("test.png");
-    }
+    }*/
 
     #[test]
     fn try_from_png() {
-        let image = image::open("/home/jam/Pictures/smash_custom_skins.png").unwrap();
+        let image = image::open("/home/jam/dev/ult/stock-generator/test.png").unwrap();
 
         let tex = BntxFile::from_image(image, "test");
 
