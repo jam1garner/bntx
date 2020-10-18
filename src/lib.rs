@@ -43,7 +43,8 @@ const EMPTY_STR_SIZE: usize = 4;
 const FILENAME_STR_OFFSET: usize = START_OF_STR_SECTION + STR_HEADER_SIZE + EMPTY_STR_SIZE;
 
 const BRTD_SECTION_START: usize = 0xFF0;
-const START_OF_TEXTURE_DATA: usize = BRTD_SECTION_START + 0x10;
+const SIZE_OF_BRTD: usize = 0x10;
+const START_OF_TEXTURE_DATA: usize = BRTD_SECTION_START + SIZE_OF_BRTD;
 
 impl BntxHeader {
     fn write_options<W: io::Write>(
@@ -514,9 +515,9 @@ impl BntxFile {
     fn from_image(img: image::DynamicImage, name: &str) -> Self {
         let img = img.to_rgba();
 
-        let (height, width) = img.dimensions();
+        let (width, height) = img.dimensions();
         
-        let data = tegra_swizzle::swizzle(
+        let mut data = tegra_swizzle::swizzle(
             width, height, 1,
             1,
             1,
@@ -528,6 +529,18 @@ impl BntxFile {
             &img.into_raw()
         );
 
+        data.extend_from_slice(&[0; 0xC00][..]);
+
+        let str_section = StrSection {
+            unk: 0x48,
+            unk2: 0x48,
+            unk3: 0,
+            strings: vec![BntxStr::from(name.to_owned())],
+        };
+
+        let str_section_size = str_section.get_size();
+        let dict_section_size = (DictSection {}).get_size();
+
         BntxFile {
             header: BntxHeader {
                 version: (0, 4),
@@ -535,15 +548,95 @@ impl BntxFile {
                 inner: HeaderInner {
                     revision: 0x400c,
                     file_name: name.into(),
-                    str_section: StrSection {
-                        unk: 0x48,
-                        unk2: 0x48,
-                        unk3: 0,
-                        strings: vec![BntxStr::from(name.to_owned())],
-                    },
+                    str_section,
                     reloc_table: RelocationTable {
-                        sections: vec![],
-                        entries: vec![]
+                        sections: vec![
+                            RelocationSection {
+                                pointer: 0,
+                                position: 0,
+                                size: (
+                                    START_OF_STR_SECTION +
+                                    str_section_size +
+                                    (DictSection {}).get_size() +
+                                    SIZE_OF_BRTI +
+                                    0x200
+                                ) as u32,
+                                index: 0,
+                                count: 4,
+                            },
+                            RelocationSection {
+                                pointer: 0,
+                                position: BRTD_SECTION_START as u32,
+                                size: (data.len() + SIZE_OF_BRTD) as u32,
+                                index: 4,
+                                count: 1,
+                            },
+                        ],
+                        entries: vec![
+                            RelocationEntry {
+                                position: BNTX_HEADER_SIZE as u32 + 8,
+                                struct_count: 2,
+                                offset_count: 1,
+                                padding_count: (
+                                    (
+                                        (HEADER_SIZE + MEM_POOL_SIZE) - (BNTX_HEADER_SIZE + 0x10)
+                                    ) / 8
+                                ) as u8,
+                            },
+                            RelocationEntry {
+                                position: BNTX_HEADER_SIZE as u32 + 0x18,
+                                struct_count: 2,
+                                offset_count: 2,
+                                padding_count: (
+                                    (
+                                        START_OF_STR_SECTION
+                                            + str_section_size
+                                            + dict_section_size
+                                            + 0x80
+                                            - HEADER_SIZE
+                                    ) / 8
+                                ) as u8,
+                            },
+                            RelocationEntry {
+                                position:(
+                                    START_OF_STR_SECTION
+                                        + str_section_size
+                                        + 0x10
+                                ) as u32,
+                                struct_count: 2,
+                                offset_count: 1,
+                                padding_count: 1,
+                            },
+                            RelocationEntry {
+                                position:(
+                                    START_OF_STR_SECTION
+                                        + str_section_size
+                                        + dict_section_size
+                                        + 0x60
+                                ) as u32,
+                                struct_count: 1,
+                                offset_count: 3,
+                                padding_count: 0,
+                            },
+                            RelocationEntry {
+                                position:(
+                                    BNTX_HEADER_SIZE + 0x10
+                                ) as u32,
+                                struct_count: 2,
+                                offset_count: 1,
+                                padding_count: (
+                                    (
+                                        (
+                                            START_OF_STR_SECTION
+                                                + str_section_size
+                                                + dict_section_size
+                                                + SIZE_OF_BRTI
+                                                + 0x200
+                                        ) - (BNTX_HEADER_SIZE + 0x18)
+                                    ) / 8
+                                ) as u8,
+                            }
+                        ]
                     }
                 }
             },
@@ -557,7 +650,7 @@ impl BntxFile {
                     dim: 2,
                     tile_mode: 0,
                     swizzle: 0,
-                    mips_count: 0,
+                    mips_count: 1,
                     num_multi_sample: 1,
                     format: SurfaceFormat::R8G8B8A8_SRGB,
                     unk2: 32,
@@ -574,7 +667,7 @@ impl BntxFile {
                         0,
                         0,
                     ],
-                    image_size: 4 * height * width,
+                    image_size: data.len() as _,
                     align: 512,
                     comp_sel: 84148994,
                     ty: 1,
