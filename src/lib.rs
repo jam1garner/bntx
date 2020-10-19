@@ -452,6 +452,7 @@ impl BntxFile {
         );
 
         let base_size = info.width as usize * info.height as usize * 4;
+        
         image::DynamicImage::ImageRgba8(
             image::RgbaImage::from_raw(info.width, info.height, data[..base_size].to_owned())
                 .unwrap()
@@ -516,7 +517,9 @@ impl BntxFile {
 
         let (width, height) = img.dimensions();
         
-        let mut data = tegra_swizzle::swizzle(
+        let data = img.into_raw();
+
+        let data = tegra_swizzle::swizzle(
             width, height, 1,
             1,
             1,
@@ -524,11 +527,9 @@ impl BntxFile {
             false,
             4,
             0,
-            4,
-            &img.into_raw()
+            if width <= 64 && height <= 64 { 3 } else { 4 },
+            &data
         );
-
-        data.extend_from_slice(&[0; 0xC00][..]);
 
         let str_section = StrSection {
             unk: 0x48,
@@ -710,7 +711,7 @@ mod tests {
     fn try_from_png() {
         let image = image::open("/home/jam/dev/ult/bntx/test.png").unwrap();
 
-        let tex = BntxFile::from_image(image, "test");
+        let tex = BntxFile::from_image(image, "ester");
 
         tex.save("test.bntx").unwrap();
     }
