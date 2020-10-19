@@ -556,9 +556,9 @@ impl BntxFile {
                                 size: (
                                     START_OF_STR_SECTION +
                                     str_section_size +
-                                    (DictSection {}).get_size() +
+                                    dict_section_size +
                                     SIZE_OF_BRTI +
-                                    0x200
+                                    0x208
                                 ) as u32,
                                 index: 0,
                                 count: 4,
@@ -691,10 +691,11 @@ mod tests {
     use binread::io::*;
     use super::BntxFile;
 
-    /*#[test]
+    /*
+    #[test]
     fn try_parse() {
-        //let mut data = Cursor::new(&include_bytes!("/home/jam/Downloads/ester.bntx")[..]);
-        let mut data = Cursor::new(&include_bytes!("/home/jam/dev/ult/bntx/test.bntx")[..]);
+        let mut data = Cursor::new(&include_bytes!("/home/jam/Downloads/ester.bntx")[..]);
+        //let mut data = Cursor::new(&include_bytes!("/home/jam/dev/ult/bntx/test.bntx")[..]);
 
         let test: BntxFile = data.read_le().unwrap();
 
@@ -702,11 +703,12 @@ mod tests {
 
         test.to_image()
             .save("test.png");
-    }*/
+    }
+    */
 
     #[test]
     fn try_from_png() {
-        let image = image::open("/home/jam/dev/ult/stock-generator/test.png").unwrap();
+        let image = image::open("/home/jam/dev/ult/bntx/test.png").unwrap();
 
         let tex = BntxFile::from_image(image, "test");
 
