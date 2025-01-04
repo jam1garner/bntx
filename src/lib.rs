@@ -513,7 +513,7 @@ impl BntxFile {
     }
 
     pub fn from_image(img: image::DynamicImage, name: &str) -> Self {
-        let img = img.to_rgba();
+        let img = img.to_rgba8();
 
         let (width, height) = img.dimensions();
         
